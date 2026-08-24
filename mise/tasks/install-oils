@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+#MISE description="Install Oil shell (oils) into ~/.local (no sudo)"
+#MISE alias="oils:install"
+#USAGE arg "[version]" help="Oils version (e.g. 0.37.0). Defaults to latest."
+#USAGE flag "-p --prefix <path>" help="Install prefix (default: ~/.local)" default="$HOME/.local"
+#USAGE flag "-f --force" help="Reinstall even if the requested version is already present"
+
+set -euo pipefail
+
+# ---------- Args ----------
+version="${usage_version:-}"
+prefix="${usage_prefix:-$HOME/.local}"
+force="${usage_force:-0}"
+
+# Resolve latest version if not specified.
+if [[ -z "${version}" ]]; then
+    # Oils doesn't publish version.txt or use GitHub Releases; the canonical
+    # source is https://www.oilshell.org/releases.html (also mirrored at
+    # oils.pub/releases.html). Each release is listed on its own line as
+    # `YYYY-MM-DD VERSION`.
+    version="$(curl -fsSL https://www.oilshell.org/releases.html \
+        | grep -oE '^[0-9]{4}-[0-9]{2}-[0-9]{2}[[:space:]]+[0-9]+\.[0-9]+\.[0-9]+' \
+        | head -n1 \
+        | awk '{print $2}')" \
+        || { echo "error: could not determine latest Oils version" >&2; exit 1; }
+fi
+
+# Oils tarballs use the 'oils-for-unix-<version>' directory name.
+# The install creates three binaries (all symlinks to the same executable):
+#   oils-for-unix  - the actual C++ binary
+#   osh            - POSIX-compatible mode symlink
+#   ysh            - YSH (structured) mode symlink
+# There is no `oil` binary; the project was renamed from "Oil" to "Oils".
+tarball="oils-for-unix-${version}.tar.gz"
+download_url="https://oils.pub/download/${tarball}"
+expected_bin="${prefix}/bin/ysh"
+
+# ---------- Idempotency check ----------
+if [[ "${force}" -eq 0 && -x "${expected_bin}" ]]; then
+    installed_version="$("${expected_bin}" -V 2>/dev/null | awk '{print $NF}' || true)"
+    # Oils reports itself as "Oils version 0.37.0" — be lenient about format.
+    if [[ "${installed_version}" == *"${version}"* ]]; then
+        echo "Oils ${version} already installed at ${expected_bin} — nothing to do."
+        exit 0
+    fi
+    echo "Installed Oils is '${installed_version}', requested '${version}' — reinstalling."
+fi
+
+# ---------- Build & install ----------
+# Use a tmp dir so we don't leave build artefacts behind.
+work="$(mktemp -d)"
+trap 'rm -rf "${work}"' EXIT
+
+echo "Downloading Oils ${version} from ${download_url}"
+curl -fsSL -o "${work}/${tarball}" "${download_url}" \
+    || { echo "error: download failed" >&2; exit 1; }
+
+echo "Extracting"
+tar -xzf "${work}/${tarball}" -C "${work}"
+
+src_dir="${work}/oils-for-unix-${version}"
+[[ -d "${src_dir}" ]] || { echo "error: extracted directory not found" >&2; exit 1; }
+
+cd "${src_dir}"
+
+echo "Configuring with --prefix=${prefix}"
+./configure --prefix "${prefix}"
+
+echo "Building"
+./_build/oils.sh
+
+echo "Installing"
+./install
+
+# Verify
+if [[ ! -x "${expected_bin}" ]]; then
+    echo "error: install succeeded but ${expected_bin} is missing" >&2
+    exit 1
+fi
+
+echo
+echo "Installed Oils ${version} at ${expected_bin}"
+echo "Run with: ${expected_bin} --version"
+echo "Other binaries in ${prefix}/bin: osh, oils-for-unix (all symlinks)"
+echo
+echo "If '${prefix}/bin' is not on your PATH, add it:"
+echo "  export PATH=\"${prefix}/bin:\$PATH\""
