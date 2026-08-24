@@ -1,0 +1,88 @@
+#!/usr/bin/env ysh
+# parse_duration.ysh — proof-of-concept: the bash parse_duration_ms in ysh.
+#
+# Compare to the bash version (gt-installer.sh parse_duration_ms, ~50 lines
+# including the gawk/POSIX dual path, BWK awk workarounds, and -f /dev/stdin
+# indirection). The whole thing fits in one function below.
+#
+# ysh gotchas discovered along the way:
+#   - function names can't contain '-' (parser treats it as subtraction)
+#   - function calls need a space before '(' (e.g. "f (x)" not "f(x)")
+#   - eggexes like [a-zA-Z] don't parse in 0.37 — use named classes (digit,
+#     word) or (.+) and validate the captured text against a dict
+#   - 'not' is a builtin; wrap compound conditions in (not (...))
+
+const UNIT_MS = {
+  ms: 1, millisecond: 1, milliseconds: 1,
+  s: 1000, sec: 1000, second: 1000, seconds: 1000,
+  m: 60_000, min: 60_000, minute: 60_000, minutes: 60_000,
+  h: 3_600_000, hour: 3_600_000, hours: 3_600_000,
+  d: 86_400_000, day: 86_400_000, days: 86_400_000,
+}
+
+# Parse a single "<num><unit>" pair glued together (e.g. "5s", "1day").
+# Returns Int milliseconds, or null if the input doesn't match. Silent on
+# failure because parse_duration tries multiple candidates per token.
+func parse_pair (p) {
+  # Strip any leading whitespace so a number sits at position 0.
+  var stripped = p
+  while (stripped[0:1] === ' ') {
+    setvar stripped = stripped[1:]
+  }
+  # The eggex: <capture d+> <capture (.+) %end>. Whole-string anchor via %end
+  # means we only need the unit to be everything after the digits.
+  var m = stripped.search(/ <capture d+> (.+) %end /)
+  if (m === null) {
+    return (null)
+  }
+  var n = int(m.group(1))
+  var unit = m.group(2)
+  if (not (unit in UNIT_MS)) {
+    return (null)
+  }
+  return (n * UNIT_MS[unit])
+}
+
+# Sum a duration string into milliseconds. Handles both glued ("5s") and
+# space-separated ("5 seconds", "2 hours 30 minutes") forms.
+#
+# Strategy: split on whitespace, walk the tokens with a sliding window.
+# For each token, first try it alone (handles "5s", "1day"). If that
+# fails and the token is a bare number, glue it to the next token
+# (without the space) and retry (handles "5" + "seconds" -> "5seconds").
+func parse_duration (s) {
+  var parts = s.split(' ')
+  var total = 0
+  var i = 0
+  while (i < len(parts)) {
+    var part = parts[i]
+    if (part === '') { setvar i += 1; continue }
+    var n = parse_pair (part)
+    if (n !== null) {
+      setvar total += n
+      setvar i += 1
+      continue
+    }
+    # Bare number? Try gluing to the next token (no space, per parse_pair's
+    # contract that <num> and <unit> are adjacent).
+    var m = part.search(/ <capture d+> %end /)
+    if (m !== null and (i + 1) < len(parts)) {
+      var combined = part ++ parts[i + 1]
+      var n2 = parse_pair (combined)
+      if (n2 !== null) {
+        setvar total += n2
+        setvar i += 2
+        continue
+      }
+    }
+    echo "parse_duration: could not parse token: $part" >&2
+    setvar i += 1
+  }
+  return (total)
+}
+
+# --- demo ---
+for s in '5 seconds' '1m' '2 hours 30 minutes' '500 ms' '1day' '9sec' '5s' {
+  var n = parse_duration (s)
+  printf '%-20s -> %d ms\n' $s $n
+}
