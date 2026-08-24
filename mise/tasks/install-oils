@@ -45,14 +45,23 @@ download_url="https://oils.pub/download/${tarball}"
 expected_bin="${prefix}/bin/ysh"
 
 # ---------- Idempotency check ----------
+# `ysh` and `osh` are strict-mode shells that error on unknown flags like
+# `-V`. The canonical version probe is `oils-for-unix --version`, which
+# outputs a line like: "Oils 0.37.0  https://oils.pub/".
+# We pick the second whitespace-delimited token as the version string.
 if [[ "${force}" -eq 0 && -x "${expected_bin}" ]]; then
-    installed_version="$("${expected_bin}" -V 2>/dev/null | awk '{print $NF}' || true)"
-    # Oils reports itself as "Oils version 0.37.0" — be lenient about format.
-    if [[ "${installed_version}" == *"${version}"* ]]; then
+    oils_bin="${prefix}/bin/oils-for-unix"
+    installed_version=""
+    if [[ -x "${oils_bin}" ]]; then
+        installed_version="$("${oils_bin}" --version 2>/dev/null | awk 'NR==1{print $2}' || true)"
+    fi
+    if [[ "${installed_version}" == "${version}" ]]; then
         echo "Oils ${version} already installed at ${expected_bin} — nothing to do."
         exit 0
     fi
-    echo "Installed Oils is '${installed_version}', requested '${version}' — reinstalling."
+    if [[ -n "${installed_version}" ]]; then
+        echo "Installed Oils is '${installed_version}', requested '${version}' — reinstalling."
+    fi
 fi
 
 # ---------- Build & install ----------
