@@ -78,6 +78,34 @@ if [[ ! -x "${expected_bin}" ]]; then
     exit 1
 fi
 
+# ---------- Smoke test ----------
+# Run the documented smoke tests from INSTALL.html to confirm the install
+# actually works (not just that the binary exists). OSH should behave as a
+# POSIX shell; YSH should handle structured data.
+echo
+echo "Running smoke tests..."
+
+smoke_fail() {
+    echo "error: smoke test failed: $*" >&2
+    exit 1
+}
+
+# OSH: POSIX-shell smoke test
+osh="${prefix}/bin/osh"
+if [[ -x "${osh}" ]]; then
+    out="$("${osh}" -c 'echo hi')"
+    [[ "${out}" == "hi" ]] || smoke_fail "osh -c 'echo hi' produced '${out}' (expected 'hi')"
+    echo "  ok osh -c 'echo hi' -> ${out}"
+else
+    smoke_fail "${osh} missing"
+fi
+
+# YSH: structured-data smoke test (the point of Oils vs plain OSH)
+out="$("${expected_bin}" -c 'json write ({x: 42})')"
+[[ "${out}" == *'"x"'* && "${out}" == *'42'* ]] \
+    || smoke_fail "ysh -c 'json write ({x: 42})' produced '${out}' (expected JSON with x=42)"
+echo "  ok ysh -c 'json write ({x: 42})' -> ${out}"
+
 echo
 echo "Installed Oils ${version} at ${expected_bin}"
 echo "Run with: ${expected_bin} --version"
