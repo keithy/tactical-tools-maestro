@@ -2,7 +2,7 @@
 #MISE description="Install Oil shell (oils) into ~/.local (no sudo)"
 #MISE alias="oils:install"
 #USAGE arg "[version]" help="Oils version (e.g. 0.37.0). Defaults to latest."
-#USAGE flag "-p --prefix <path>" help="Install prefix (default: ~/.local)" default="$HOME/.local"
+#USAGE flag "-p --prefix <path>" help="Install prefix (default: home .local)"
 #USAGE flag "-f --force" help="Reinstall even if the requested version is already present"
 
 set -euo pipefail
