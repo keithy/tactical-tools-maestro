@@ -14,11 +14,10 @@ force="${usage_force:-0}"
 
 # Resolve latest version if not specified.
 if [[ -z "${version}" ]]; then
-    # Oils doesn't publish version.txt or use GitHub Releases; the canonical
-    # source is https://www.oilshell.org/releases.html (also mirrored at
-    # oils.pub/releases.html). Each release is listed on its own line as
-    # `YYYY-MM-DD VERSION`.
-    version="$(curl -fsSL https://www.oilshell.org/releases.html \
+    # oils.pub is the canonical source (oilshell.org redirects to it but the
+    # mirrored releases.html is stale). Each release is listed on its own
+    # line as `YYYY-MM-DD VERSION`.
+    version="$(curl -fsSL https://oils.pub/releases.html \
         | grep -oE '^[0-9]{4}-[0-9]{2}-[0-9]{2}[[:space:]]+[0-9]+\.[0-9]+\.[0-9]+' \
         | head -n1 \
         | awk '{print $2}')" \
