@@ -10,7 +10,13 @@ set -euo pipefail
 # ---------- Args ----------
 version="${usage_version:-}"
 prefix="${usage_prefix:-$HOME/.local}"
-force="${usage_force:-0}"
+# mise's usage parser sets flag values to the literal strings "true"/"false",
+# not 1/0, so we compare against the string rather than using -eq.
+if [[ "${usage_force:-}" == "true" ]]; then
+    force=1
+else
+    force=0
+fi
 
 # Resolve latest version if not specified.
 if [[ -z "${version}" ]]; then
