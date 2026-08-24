@@ -14,14 +14,24 @@ force="${usage_force:-0}"
 
 # Resolve latest version if not specified.
 if [[ -z "${version}" ]]; then
-    # oils.pub is the canonical source (oilshell.org redirects to it but the
-    # mirrored releases.html is stale). Each release is listed on its own
-    # line as `YYYY-MM-DD VERSION`.
-    version="$(curl -fsSL https://oils.pub/releases.html \
-        | grep -oE '^[0-9]{4}-[0-9]{2}-[0-9]{2}[[:space:]]+[0-9]+\.[0-9]+\.[0-9]+' \
+    # Oils doesn't publish a version.txt or use GitHub Releases for source
+    # tarballs. oils.pub is the canonical release page. The HTML wraps each
+    # release as:
+    #   <span class="date">YYYY-MM-DD</span>
+    #   ... <a href="release/X.Y.Z/">Docs and Details</a>
+    # so we can find the latest version by grabbing the first `release/X.Y.Z/`
+    # link. As a fallback we also try the mirror at oilshell.org (which
+    # redirects to oils.pub but may have a different cache).
+    page="$(curl -fsSL https://oils.pub/releases.html 2>&1)" || {
+        echo "warning: oils.pub/releases.html unreachable; trying oilshell.org mirror" >&2
+        page="$(curl -fsSL https://www.oilshell.org/releases.html 2>&1)" \
+            || { echo "error: could not fetch Oils release index" >&2; exit 1; }
+    }
+    version="$(printf '%s\n' "${page}" \
+        | grep -oE 'release/[0-9]+\.[0-9]+\.[0-9]+/' \
         | head -n1 \
-        | awk '{print $2}')" \
-        || { echo "error: could not determine latest Oils version" >&2; exit 1; }
+        | sed -E 's|^release/||; s|/$||')"
+    [[ -n "${version}" ]] || { echo "error: could not parse latest Oils version from release index" >&2; exit 1; }
 fi
 
 # Oils tarballs use the 'oils-for-unix-<version>' directory name.
