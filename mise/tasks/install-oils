@@ -1,0 +1,139 @@
+#!/usr/bin/env bash
+#MISE description="Install Oil shell (oils) into ~/.local (no sudo)"
+#MISE alias="oils:install"
+#USAGE arg "[version]" help="Oils version (e.g. 0.37.0). Defaults to latest."
+#USAGE flag "-p --prefix <path>" help="Install prefix (default: home .local)"
+#USAGE flag "-f --force" help="Reinstall even if the requested version is already present"
+
+set -euo pipefail
+
+# ---------- Args ----------
+version="${usage_version:-}"
+prefix="${usage_prefix:-$HOME/.local}"
+# mise's usage parser sets flag values to the literal strings "true"/"false",
+# not 1/0, so we compare against the string rather than using -eq.
+if [[ "${usage_force:-}" == "true" ]]; then
+    force=1
+else
+    force=0
+fi
+
+# Resolve latest version if not specified.
+if [[ -z "${version}" ]]; then
+    # Oils doesn't publish a version.txt or use GitHub Releases for source
+    # tarballs. oils.pub is the canonical release page. The HTML wraps each
+    # release as:
+    #   <span class="date">YYYY-MM-DD</span>
+    #   ... <a href="release/X.Y.Z/">Docs and Details</a>
+    # so we can find the latest version by grabbing the first `release/X.Y.Z/`
+    # link. As a fallback we also try the mirror at oilshell.org (which
+    # redirects to oils.pub but may have a different cache).
+    page="$(curl -fsSL https://oils.pub/releases.html 2>&1)" || {
+        echo "warning: oils.pub/releases.html unreachable; trying oilshell.org mirror" >&2
+        page="$(curl -fsSL https://www.oilshell.org/releases.html 2>&1)" \
+            || { echo "error: could not fetch Oils release index" >&2; exit 1; }
+    }
+    version="$(printf '%s\n' "${page}" \
+        | grep -oE 'release/[0-9]+\.[0-9]+\.[0-9]+/' \
+        | head -n1 \
+        | sed -E 's|^release/||; s|/$||')"
+    [[ -n "${version}" ]] || { echo "error: could not parse latest Oils version from release index" >&2; exit 1; }
+fi
+
+# Oils tarballs use the 'oils-for-unix-<version>' directory name.
+# The install creates three binaries (all symlinks to the same executable):
+#   oils-for-unix  - the actual C++ binary
+#   osh            - POSIX-compatible mode symlink
+#   ysh            - YSH (structured) mode symlink
+# There is no `oil` binary; the project was renamed from "Oil" to "Oils".
+tarball="oils-for-unix-${version}.tar.gz"
+download_url="https://oils.pub/download/${tarball}"
+expected_bin="${prefix}/bin/ysh"
+
+# ---------- Idempotency check ----------
+# `ysh` and `osh` are strict-mode shells that error on unknown flags like
+# `-V`. The canonical version probe is `oils-for-unix --version`, which
+# outputs a line like: "Oils 0.37.0  https://oils.pub/".
+# We pick the second whitespace-delimited token as the version string.
+if [[ "${force}" -eq 0 && -x "${expected_bin}" ]]; then
+    oils_bin="${prefix}/bin/oils-for-unix"
+    installed_version=""
+    if [[ -x "${oils_bin}" ]]; then
+        installed_version="$("${oils_bin}" --version 2>/dev/null | awk 'NR==1{print $2}' || true)"
+    fi
+    if [[ "${installed_version}" == "${version}" ]]; then
+        echo "Oils ${version} already installed at ${expected_bin} — nothing to do."
+        exit 0
+    fi
+    if [[ -n "${installed_version}" ]]; then
+        echo "Installed Oils is '${installed_version}', requested '${version}' — reinstalling."
+    fi
+fi
+
+# ---------- Build & install ----------
+# Use a tmp dir so we don't leave build artefacts behind.
+work="$(mktemp -d)"
+trap 'rm -rf "${work}"' EXIT
+
+echo "Downloading Oils ${version} from ${download_url}"
+curl -fsSL -o "${work}/${tarball}" "${download_url}" \
+    || { echo "error: download failed" >&2; exit 1; }
+
+echo "Extracting"
+tar -xzf "${work}/${tarball}" -C "${work}"
+
+src_dir="${work}/oils-for-unix-${version}"
+[[ -d "${src_dir}" ]] || { echo "error: extracted directory not found" >&2; exit 1; }
+
+cd "${src_dir}"
+
+echo "Configuring with --prefix=${prefix}"
+./configure --prefix "${prefix}"
+
+echo "Building"
+./_build/oils.sh
+
+echo "Installing"
+./install
+
+# Verify
+if [[ ! -x "${expected_bin}" ]]; then
+    echo "error: install succeeded but ${expected_bin} is missing" >&2
+    exit 1
+fi
+
+# ---------- Smoke test ----------
+# Run the documented smoke tests from INSTALL.html to confirm the install
+# actually works (not just that the binary exists). OSH should behave as a
+# POSIX shell; YSH should handle structured data.
+echo
+echo "Running smoke tests..."
+
+smoke_fail() {
+    echo "error: smoke test failed: $*" >&2
+    exit 1
+}
+
+# OSH: POSIX-shell smoke test
+osh="${prefix}/bin/osh"
+if [[ -x "${osh}" ]]; then
+    out="$("${osh}" -c 'echo hi')"
+    [[ "${out}" == "hi" ]] || smoke_fail "osh -c 'echo hi' produced '${out}' (expected 'hi')"
+    echo "  ok osh -c 'echo hi' -> ${out}"
+else
+    smoke_fail "${osh} missing"
+fi
+
+# YSH: structured-data smoke test (the point of Oils vs plain OSH)
+out="$("${expected_bin}" -c 'json write ({x: 42})')"
+[[ "${out}" == *'"x"'* && "${out}" == *'42'* ]] \
+    || smoke_fail "ysh -c 'json write ({x: 42})' produced '${out}' (expected JSON with x=42)"
+echo "  ok ysh -c 'json write ({x: 42})' -> ${out}"
+
+echo
+echo "Installed Oils ${version} at ${expected_bin}"
+echo "Run with: ${expected_bin} --version"
+echo "Other binaries in ${prefix}/bin: osh, oils-for-unix (all symlinks)"
+echo
+echo "If '${prefix}/bin' is not on your PATH, add it:"
+echo "  export PATH=\"${prefix}/bin:\$PATH\""
