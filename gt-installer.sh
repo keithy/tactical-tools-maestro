@@ -517,7 +517,10 @@ smalltalk_eval() {
         shift
     done
     if [[ "${save_flag}" == "1" ]]; then
-        smalltalk_command eval --no-quit "${expr}.Smalltalk snapshot: true andQuit: false"
+        # Save the image and quit the VM so the install step completes.
+        # Earlier versions chained `andQuit: false` here, which left the
+        # VM hanging waiting for stdin and the installer hung forever.
+        smalltalk_command eval --no-quit "${expr}.Smalltalk snapshot: true andQuit: true"
     else
         smalltalk_command eval --no-quit "${expr}"
     fi
