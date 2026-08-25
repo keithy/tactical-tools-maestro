@@ -593,7 +593,7 @@ resolve_loader_version_info() {
 subcommand_build() {
     # Parse build options (parity with BuildOptions in src/tools/builder.rs).
     local overwrite=0 loader="cloner" image_url="" image_zip="" image_file=""
-    local iceberg_location="" public_key="" private_key=""
+    local iceberg_location="${GT_INSTALLER_ICEBERG_LOCATION:-}" public_key="" private_key=""
     local version="bleeding-edge" app_version="latest-release" customer_level="auto"
 
     while (( $# )); do
@@ -615,6 +615,15 @@ subcommand_build() {
         esac
         shift
     done
+
+    # Resolve iceberg_location with priority: CLI flag > env var > YAML.
+    if [[ -z "${iceberg_location}" ]]; then
+        local yaml_ice
+        yaml_ice="$(read_yaml_field "$(app_workspace)/${SERIALIZATION_FILE}" iceberg_location 2>/dev/null || true)"
+        if [[ -n "${yaml_ice}" ]]; then
+            iceberg_location="${yaml_ice}"
+        fi
+    fi
 
     local workspace; workspace="$(app_workspace)"
     info "${CHECKING}Checking the system..."
@@ -1311,6 +1320,14 @@ app_version: "${app_v}"
 # Optional override for the gtoolkit CLI binary. Leave empty to use the
 # binary downloaded into \`workspace\`.
 app_cli_binary: ""
+
+# Override the Iceberg repository cache (where gtoolkit-vm stores cloned
+# GT repos). Default is "pharo-local/iceberg/" relative to workspace.
+# Set to an absolute path to share the cache across multiple workspaces
+# (saves ~24 min on the second build). The --iceberg-location CLI flag
+# takes precedence; the GT_INSTALLER_ICEBERG_LOCATION env var is also
+# honoured.
+iceberg_location: ""
 
 # gtoolkit image version to load (resolved via the cloner/metacello loaders).
 image_version: "${img_v}"
