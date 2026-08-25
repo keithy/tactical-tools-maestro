@@ -444,9 +444,10 @@ download_glamorous_toolkit_vm() {
 }
 
 # ---------- Smalltalk evaluation -----------------------------------------
-# Mirrors src/smalltalk/evaluator.rs + smalltalk.rs. The default `--interactive`
-# flag matches the Rust binary for gtoolkit images; pass `--headless` to run a
-# plain Pharo image (e.g. the seed Pharo before gtoolkit is loaded).
+# Mirrors src/smalltalk/evaluator.rs + smalltalk.rs. No flag means headless
+# mode (the local GlamorousToolkit CLI runs headless by default and
+# rejects --headless as an unknown argument; the only valid head/UI
+# switch is --interactive, which we use when a UI is actually wanted).
 
 smalltalk_command() {
     local mode="${1:-st}"; shift || true
@@ -461,13 +462,11 @@ smalltalk_command() {
             cmd=("${cli}") ;;
     esac
 
-    # gtoolkit flags: --interactive by default. Plain Pharo uses --headless.
-    # We default to --interactive when the CLI exists; users can override via
-    # GT_INSTALLER_SMALLTALK_FLAGS for advanced cases.
+    # No flag by default means headless mode, which is correct for most
+    # installer steps. Callers that want a UI pass --interactive
+    # explicitly (via the smalltalk_command wrapper, or by setting
+    # GT_INSTALLER_SMALLTALK_FLAGS=--interactive).
     local flags="${GT_INSTALLER_SMALLTALK_FLAGS:-}"
-    if [[ -z "${flags}" ]]; then
-        flags="--interactive"
-    fi
     # shellcheck disable=SC2206
     local flag_arr=( ${flags} )
 
@@ -706,8 +705,11 @@ subcommand_build() {
         # the Rust binary which calls `SmalltalkCommand::new("save")`.
         local cli_bin
         cli_bin="$(app_cli_path)"
-        # Save the seed image into the workspace.
-        ( cd "${seed_dir}" && "${cli_bin}" --headless "$(basename "${seed_image}")" \
+        # Save the seed image into the workspace. The local GlamorousToolkit
+        # CLI runs headless by default (no flag) and rejects --headless as
+        # an unknown argument; --interactive would open a UI which we don't
+        # want. So: no flag at all.
+        ( cd "${seed_dir}" && "${cli_bin}" "$(basename "${seed_image}")" \
             save "${workspace}/$(app_image_name)" ) \
             || die "failed to save seed image into workspace"
 
@@ -722,7 +724,14 @@ subcommand_build() {
     # Render the loader scripts.
     info "${CREATING}Creating build scripts..."
     local gtv relv
-    read -r gtv relv < <(resolve_loader_version_info "${version}")
+    # resolve_loader_version_info prints two values, one per line. We
+    # can't use a single `read gtv relv` because read treats newlines as
+    # ordinary whitespace and merges the two lines into a single
+    # space-separated value. Use a temp array instead.
+    local gtv_relv
+    mapfile -t gtv_relv < <(resolve_loader_version_info "${version}")
+    gtv="${gtv_relv[0]:-}"
+    relv="${gtv_relv[1]:-}"
 
     cp "${GT_INSTALLER_LOAD_PATCHES_ST}" "${workspace}/load-patches.st"
     local loader_script="load-gt-${gtv}.st"
