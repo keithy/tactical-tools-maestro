@@ -1,0 +1,6 @@
+# macOS / editor cruft
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.bak
