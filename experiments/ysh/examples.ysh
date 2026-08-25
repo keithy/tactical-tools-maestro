@@ -1,0 +1,177 @@
+#!/usr/bin/env ysh
+# examples.ysh — concrete examples where Oils/ysh beats bash.
+#
+# Run with: ysh examples.ysh
+# Requires: Oils >= 0.37.0
+
+# ----------------------------------------------------------------------------
+# 1. Native JSON parsing (no jq, no python, no manual regex)
+# ----------------------------------------------------------------------------
+# bash equivalent:
+#   version=$(curl -fsSL https://api.github.com/repos/feenkcom/gtoolkit/releases/latest \
+#     | grep -oE '"tag_name":\s*"v?[^"]+"' \
+#     | head -n1 \
+#     | sed -E 's/.*"v?([^"]+)".*/\1/')
+#
+# ysh version: a single fromJson() call, then normal field access.
+
+const GH_PAYLOAD = '{
+  "tag_name": "v1.1.563",
+  "name": "GlamorousToolkit v1.1.563",
+  "prerelease": false,
+  "published_at": "2025-08-15T10:30:00Z"
+}'
+
+echo '=== 1. JSON parsing ==='
+var release = fromJson(GH_PAYLOAD)
+echo "tag:        $[release.tag_name]"
+echo "name:       $[release.name]"
+echo "prerelease: $[release.prerelease]"
+echo "published:  $[release.published_at]"
+
+# To strip a leading "v" without a sed pipeline:
+var tag = release.tag_name
+if (tag[0:1] === 'v') {
+  setvar tag = tag[1:]
+}
+echo "stripped:   $tag"
+echo
+
+# ----------------------------------------------------------------------------
+# 2. Typed dict + method dispatch (no associative-array quirks)
+# ----------------------------------------------------------------------------
+# bash equivalent (gt-installer.sh):
+#   declare -A APP
+#   APP[app_version]="${APP[app_version]:-}"
+#   APP[image_name]="$(read_yaml_field "${file}" image_name)"
+#   ...
+#
+# ysh version: a typed Dict with field access via .attr, and validation
+# baked into the type.
+
+echo '=== 2. Typed dict ==='
+
+# A typed Dict — values can be of any type, fields can be missing
+# (yielding null), and updates are normal assignments.
+var app = {
+  workspace: '/Users/me/glamoroustoolkit',
+  app_version: '1.1.68',
+  image_version: '1.1.563',
+  image_name: 'GlamorousToolkit',
+  image_extension: 'image',
+  app_cli_binary: null,
+}
+echo "workspace:     $[app.workspace]"
+echo "app_version:   $[app.app_version]"
+
+# Update an entry without the ${var:-default} dance.
+setvar app.app_version = '1.1.50'
+echo "after update:  $[app.app_version]"
+
+# Use the dict to drive a subcommand dispatch (no big case statement).
+# In ysh, `func` is for expression context (returns a value) and `proc`
+# is for command context (side effects, takes args). For a dispatcher
+# you can use either, but a regular shell function is simplest when you
+# just want to run a block of code per case.
+var commands = {
+  build:        'running build...',
+  setup:        'running setup...',
+  'print-debug': "app_version=$[app.app_version]",
+}
+
+proc run-command (name) {
+  if (name in commands) {
+    echo $[commands[name]]
+  } else {
+    echo "unknown subcommand: $name" >&2
+  }
+}
+run-command print-debug
+run-command bogus
+echo
+
+# ----------------------------------------------------------------------------
+# 3. Eggex with capture groups (no awk subshell, no backreference quirks)
+# ----------------------------------------------------------------------------
+# bash equivalent (gt-installer.sh parse_duration_ms, 50+ lines):
+#   version="$(curl -fsSL https://oils.pub/releases.html \
+#     | grep -oE 'release/[0-9]+\.[0-9]+\.[0-9]+/' \
+#     | head -n1 \
+#     | sed -E 's|^release/||; s|/$||')"
+#
+# ysh version: a single .search() with named captures, no subprocess.
+
+echo '=== 3. Eggex with capture groups ==='
+var page = '<html><body><a href="release/0.37.0/">0.37.0</a><a href="release/0.36.0/">0.36.0</a></body></html>'
+
+# First match: returns a Match object with .group(N) for capture groups.
+var first = page.search(/ 'release/' <capture d+ '.' d+ '.' d+ as ver> '/' /)
+if (first !== null) {
+  echo "latest version: $[first.group('ver')]"
+}
+
+# All matches: iterate using .search() against a sliding window of the
+# input string.
+var url_re = / 'release/' <capture d+ '.' d+ '.' d+ as ver> '/' /
+var remaining = page
+echo 'all versions:'
+while (true) {
+  var m = remaining.search(url_re)
+  if (m === null) { break }
+  echo "  $[m.group('ver')]"
+  setvar remaining = remaining[m.end(0):]
+}
+echo
+
+# ----------------------------------------------------------------------------
+# 4. try/except instead of set -E / trap / die
+# ----------------------------------------------------------------------------
+# bash equivalent:
+#   set -Eeuo pipefail
+#   die() { error "$*"; exit 1; }
+#   [[ ! -x "${prefix}/bin/ysh" ]] || die "binary missing"
+#
+# ysh version: structured exception handling with stack traces.
+
+echo '=== 4. try/except ==='
+try {
+  # Simulated failure
+  cp /nonexistent /tmp/never
+}
+if failed {
+  # `_error` is a Dict; print just the code.
+  echo "caught error code: $[_error.code]"
+}
+
+# An error you can recover from. Use `case (_error.code)` for typed errors.
+try {
+  var x = 10 / 0
+}
+case (_error.code) {
+  (0) {
+    # No error — never taken because the div always errors in 0.37.
+    echo "x = $x"
+  }
+  (else) {
+    echo "recovered from error code $[_error.code]"
+    var x = -1
+    echo "x = $x"
+  }
+}
+echo
+
+# ----------------------------------------------------------------------------
+# 5. proc / func for safe shell-and-data hybrid code
+# ----------------------------------------------------------------------------
+# bash equivalent: complex subcommand dispatcher, ~200 lines.
+# ysh version: thin wrapper, validates args, dispatches.
+
+echo '=== 5. Procs as commands ==='
+# A proc runs in command context; takes typed positional args.
+proc build (workspace, image_version) {
+  echo "build: workspace=$workspace image=$image_version"
+}
+
+# Call with positional args:
+build  /tmp/foo  1.1.563
+build  /tmp/bar  1.0.0
